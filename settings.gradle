@@ -1,0 +1,7 @@
+/**
+ * Copyright 2019 AppScale Systems, Inc
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+rootProject.name = 'appscale-cloud-datastore-proxy'
