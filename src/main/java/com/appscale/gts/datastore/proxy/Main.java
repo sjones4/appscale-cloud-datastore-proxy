@@ -6,6 +6,9 @@
 package com.appscale.gts.datastore.proxy;
 
 import static spark.Spark.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import com.appscale.gts.datastore.proxy.RemoteRpcException.Type;
 import com.google.datastore.v1.AllocateIdsRequest;
 import com.google.datastore.v1.BeginTransactionRequest;
 import com.google.datastore.v1.CommitRequest;
@@ -13,12 +16,17 @@ import com.google.datastore.v1.LookupRequest;
 import com.google.datastore.v1.RollbackRequest;
 import com.google.datastore.v1.RunQueryRequest;
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.rpc.Code;
+import com.google.rpc.Status;
 import spark.Request;
+import sun.misc.HexDumpEncoder;
 
 /**
  * Entry point for cloud datastore proxy
  */
 public class Main {
+  private static final Logger log = LoggerFactory.getLogger(Main.class);
+
   private static DatastoreService datastoreService = new RemoteDatastoreService();
   private static CloudDatastoreService cloudDatastoreService = new CloudDatastoreProxyService(datastoreService);
 
@@ -28,7 +36,7 @@ public class Main {
         request.url( ) + "\n" +
         request.headers( ).stream( )
             .reduce("", (headers, header) -> headers + header + ": " + request.headers(header) + "\n") +
-        request.body( );
+            new HexDumpEncoder().encode(request.bodyAsBytes());
   }
 
   private static byte[] handleProto(final String projectId, final String method, final byte[] data) {
@@ -47,11 +55,31 @@ public class Main {
           return cloudDatastoreService.rollback(RollbackRequest.parseFrom(data)).toByteArray();
         case "runQuery":
           return cloudDatastoreService.runQuery(RunQueryRequest.parseFrom(data)).toByteArray();
+        default:
+          return error(Code.INVALID_ARGUMENT, "Invalid method: " + method);
       }
     } catch (InvalidProtocolBufferException e) {
-      e.printStackTrace();
+      log.warn("Protocol buffer error handling request : " + e.getMessage(), e);
+      return error("Unable to handle message");
+    } catch (RemoteRpcException e) {
+      log.warn("Rpc error handling request : " + e.getMessage(), e);
+      if (e.getType().equals(Type.Application)) {
+        return error(e.getMessage());
+      } else {
+        return error("Unable to handle message");
+      }
     }
-    return new byte[0];
+  }
+
+  private static byte[] error(final String message) {
+    return error(Code.INTERNAL, message);
+  }
+
+  private static byte[] error(final Code code, final String message) {
+    return Status.newBuilder()
+        .setCode(code.getNumber())
+        .setMessage(message)
+        .build().toByteArray();
   }
 
   /**

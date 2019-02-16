@@ -8,6 +8,7 @@ package com.appscale.gts.datastore.proxy;
 import static com.google.datastore.v1.QueryResultBatch.MoreResultsType.NOT_FINISHED;
 import static com.google.datastore.v1.QueryResultBatch.MoreResultsType.NO_MORE_RESULTS;
 import java.util.List;
+import java.util.function.Function;
 import com.google.appengine.repackaged.com.google.common.collect.Lists;
 import com.google.appengine.repackaged.com.google.common.primitives.Longs;
 import com.google.appengine.repackaged.com.google.protobuf.InvalidProtocolBufferException;
@@ -33,18 +34,20 @@ import com.google.apphosting.api.DatastorePb.Query.Filter;
 import com.google.apphosting.api.DatastorePb.Query.Order;
 import com.google.apphosting.api.DatastorePb.QueryResult;
 import com.google.apphosting.api.DatastorePb.Transaction;
-import com.google.datastore.v1.EntityResult.ResultType;
-import com.google.datastore.v1.ReadOptions.ReadConsistency;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.Timestamp;
 import com.google.storage.onestore.v3.OnestoreEntity;
 import com.google.storage.onestore.v3.OnestoreEntity.EntityProto;
 import com.google.storage.onestore.v3.OnestoreEntity.Path;
 import com.google.storage.onestore.v3.OnestoreEntity.Path.Element;
 import com.google.storage.onestore.v3.OnestoreEntity.Property;
+import com.google.storage.onestore.v3.OnestoreEntity.Property.Meaning;
 import com.google.storage.onestore.v3.OnestoreEntity.PropertyValue;
 import com.google.storage.onestore.v3.OnestoreEntity.PropertyValue.ReferenceValue;
 import com.google.storage.onestore.v3.OnestoreEntity.PropertyValue.ReferenceValuePathElement;
+import com.google.storage.onestore.v3.OnestoreEntity.PropertyValue.UserValue;
 import com.google.storage.onestore.v3.OnestoreEntity.Reference;
+import com.google.type.LatLng;
 
 /**
  * Type translation for datastore vs cloud datastore
@@ -62,9 +65,8 @@ class DatastoreTypeTranslator {
 
   public static Reference translate(final com.google.datastore.v1.Key key) {
     final Reference reference = new OnestoreEntity.Reference();
-    reference.setApp(key.getPartitionId().getProjectId()); //TODO appid <-> project id conversions (appidentityservice?)
+    reference.setApp(projectIdOrDefault(key.getPartitionId().getProjectId())); //TODO appid <-> project id conversions (appidentityservice?)
     reference.setNameSpace(key.getPartitionId().getNamespaceId());
-    reference.setDatabaseId(key.getPartitionId().getProjectId());
     final Path path = new OnestoreEntity.Path();
     for (final com.google.datastore.v1.Key.PathElement pathElement : key.getPathList()) {
       path.addElement(translate(pathElement));
@@ -88,9 +90,8 @@ class DatastoreTypeTranslator {
 
   public static ReferenceValue translateVal(final com.google.datastore.v1.Key key) {
     final ReferenceValue reference = new ReferenceValue();
-    reference.setApp(key.getPartitionId().getProjectId());
+    reference.setApp(projectIdOrDefault(key.getPartitionId().getProjectId()));
     reference.setNameSpace(key.getPartitionId().getNamespaceId());
-    reference.setDatabaseId(key.getPartitionId().getProjectId());
     for (final com.google.datastore.v1.Key.PathElement pathElement : key.getPathList()) {
       reference.addPathElement(translateElement(pathElement));
     }
@@ -167,8 +168,7 @@ class DatastoreTypeTranslator {
 
   public static BeginTransactionRequest translate(final com.google.datastore.v1.BeginTransactionRequest request) {
     final BeginTransactionRequest beginTransactionRequest = new BeginTransactionRequest();
-    beginTransactionRequest.setApp(request.getProjectId());
-    beginTransactionRequest.setDatabaseId(request.getProjectId());
+    beginTransactionRequest.setApp(projectIdOrDefault(request.getProjectId()));
     return beginTransactionRequest.freeze();
   }
 
@@ -189,17 +189,21 @@ class DatastoreTypeTranslator {
 
   public static GetRequest translate(final com.google.datastore.v1.LookupRequest request) {
     final GetRequest getRequest = new GetRequest();
-    getRequest.setStrong(ReadConsistency.STRONG==request.getReadOptions().getReadConsistency());
-    final Transaction transaction = new Transaction();
-    transaction.setHandle(Longs.fromByteArray(request.getReadOptions().getTransaction().toByteArray()));
-    getRequest.setTransaction(transaction.freeze());
+    getRequest.setStrong(
+        com.google.datastore.v1.ReadOptions.ReadConsistency.STRONG==request.getReadOptions().getReadConsistency());
+    if (request.hasReadOptions() && !request.getReadOptions().getTransaction().isEmpty()) {
+      final Transaction transaction = new Transaction();
+      transaction.setHandle(Longs.fromByteArray(request.getReadOptions().getTransaction().toByteArray()));
+      getRequest.setTransaction(transaction.freeze());
+    }
     for(final com.google.datastore.v1.Key key : request.getKeysList()) {
       getRequest.addKey(translate(key));
     }
     return getRequest.freeze();
   }
 
-  public static PropertyValue translate(final com.google.datastore.v1.Value value) {
+  public static Property translate(final com.google.datastore.v1.Value value) {
+    final Property property = new Property();
     final PropertyValue propertyValue = new PropertyValue();
     switch(value.getValueTypeCase()) {
       case NULL_VALUE:
@@ -214,7 +218,11 @@ class DatastoreTypeTranslator {
         propertyValue.setDoubleValue(value.getDoubleValue());
         break;
       case TIMESTAMP_VALUE:
-        throw new UnsupportedOperationException();
+        property.setMeaning(Meaning.GD_WHEN);
+        propertyValue.setInt64Value(
+            (value.getTimestampValue().getSeconds() * 1_000_000) +
+            (value.getTimestampValue().getNanos() / 1_000));
+        break;
       case KEY_VALUE:
         propertyValue.setReferenceValue(translateVal(value.getKeyValue()));
         break;
@@ -232,32 +240,57 @@ class DatastoreTypeTranslator {
       case VALUETYPE_NOT_SET:
         throw new UnsupportedOperationException();
     }
-    return propertyValue.freeze();
+    property.setValue(propertyValue.freeze());
+    return property;
   }
 
-  public static com.google.datastore.v1.Value translate(final OnestoreEntity.PropertyValue property) {
+  public static com.google.datastore.v1.Value translate(final OnestoreEntity.Property prop) {
+    final OnestoreEntity.PropertyValue propValue = prop.getValue();
     final com.google.datastore.v1.Value.Builder value = com.google.datastore.v1.Value.newBuilder();
-    if (property.hasBooleanValue()) {
-      value.setBooleanValue(property.isBooleanValue());
+    if (propValue.hasBooleanValue()) {
+      value.setBooleanValue(propValue.isBooleanValue());
     }
-    if (property.hasDoubleValue()) {
-      value.setDoubleValue(property.getDoubleValue());
+    if (propValue.hasDoubleValue()) {
+      value.setDoubleValue(propValue.getDoubleValue());
     }
-    if (property.hasInt64Value()) {
-      value.setIntegerValue(property.getInt64Value());
+    if (propValue.hasInt64Value()) { // meaning == 7
+      if (prop.getMeaning()== Meaning.GD_WHEN.getValue()) {
+        final Timestamp.Builder builder = Timestamp.newBuilder()
+            .setSeconds(propValue.getInt64Value() / 1_000_000L)
+            .setNanos((int)(1000 * (propValue.getInt64Value() % 1_000_000L)));
+        value.setTimestampValue(builder.build());
+      } else {
+        value.setIntegerValue(propValue.getInt64Value());
+      }
     }
-    if (property.hasPointValue()) {
-      throw new UnsupportedOperationException();
+    if (propValue.hasPointValue()) {
+      final OnestoreEntity.PropertyValue.PointValue pointValue = propValue.getPointValue();
+      final LatLng.Builder builder = LatLng.newBuilder();
+      builder.setLatitude(pointValue.getX());
+      builder.setLongitude(pointValue.getY());
+      value.setGeoPointValue(builder.build());
     }
-    if (property.hasReferenceValue()) {
-      value.setKeyValue(translate(property.getReferenceValue()));
+    if (propValue.hasReferenceValue()) {
+      value.setKeyValue(translate(propValue.getReferenceValue()));
     }
-    if (property.hasStringValue()) {
-      value.setStringValue(property.getStringValue());
+    if (propValue.hasStringValue()) {
+      value.setStringValue(propValue.getStringValue());
     }
-    if (property.hasUserValue()) {
-      throw new UnsupportedOperationException();
+    if (propValue.hasUserValue()) {
+      final UserValue userValue = propValue.getUserValue();
+      final String userId = userValue.hasObfuscatedGaiaid() ? userValue.getObfuscatedGaiaid() : null;
+      final com.google.datastore.v1.Entity.Builder builder = com.google.datastore.v1.Entity.newBuilder();
+      final Function<String,com.google.datastore.v1.Value> unindexedValue = text ->
+        com.google.datastore.v1.Value.newBuilder().setStringValue(text).setExcludeFromIndexes(true).build();
+      builder.putProperties("email", unindexedValue.apply(userValue.getEmail()));
+      builder.putProperties("auth_domain", unindexedValue.apply(userValue.getAuthDomain()));
+      if (userId != null) {
+        builder.putProperties("user_id", unindexedValue.apply(userId));
+      }
+      value.setEntityValue(builder.build());
+      value.setMeaning(20);
     }
+    //value.setExcludeFromIndexes(...)
     return value.build();
   }
 
@@ -270,7 +303,7 @@ class DatastoreTypeTranslator {
     }
     for (int i=0; i<entityProto.propertySize(); i++) {
       final Property property = entityProto.getProperty(i);
-      entity.putProperties(property.getName(), translate(property.getValue()));
+      entity.putProperties(property.getName(), translate(property));
     }
     return entity.build();
   }
@@ -309,19 +342,29 @@ class DatastoreTypeTranslator {
       final com.google.datastore.v1.PropertyReference propertyReference,
       final com.google.datastore.v1.Value value
   ) {
-    final Property property = new Property();
+    final Property property = translate(value);
     property.setName(propertyReference.getName());
-    property.setValue(translate(value));
     return property.freeze();
   }
 
   public static List<Filter> filters(final List<Filter> results, final com.google.datastore.v1.Filter filter) {
     switch (filter.getFilterTypeCase()) {
       case COMPOSITE_FILTER:
+        for(int i=0; i<filter.getCompositeFilter().getFiltersCount(); i++) {
+          filters(results, filter.getCompositeFilter().getFilters(i));
+        }
         break;
       case PROPERTY_FILTER:
         final Filter filterResult = new Filter();
-        filterResult.addProperty(translate(filter.getPropertyFilter().getProperty(), filter.getPropertyFilter().getValue()));
+        filterResult.addProperty(
+            translate(filter.getPropertyFilter().getProperty(), filter.getPropertyFilter().getValue()));
+        // datastore
+        //        IN(6),
+        //        EXISTS(7),
+        //        CONTAINED_IN_REGION(8);
+        //
+        // cloud datastore v1
+        //        HAS_ANCESTOR(11),
         filterResult.setOp(filter.getPropertyFilter().getOpValue());
         results.add(filterResult);
         break;
@@ -338,15 +381,21 @@ class DatastoreTypeTranslator {
     return order;
   }
 
+  private static String projectIdOrDefault(final String projectId) {
+    return RemoteDatastoreService.getProjectIdOrContext(projectId);
+  }
+
   public static Query translate(final com.google.datastore.v1.RunQueryRequest request) {
     final Query query = new Query();
     query.setNameSpace(request.getPartitionId().getNamespaceId());
-    query.setDatabaseId(request.getPartitionId().getProjectId());
-    query.setStrong(ReadConsistency.STRONG==request.getReadOptions().getReadConsistency());
-    final Transaction transaction = new Transaction();
-    transaction.setHandle(Longs.fromByteArray(request.getReadOptions().getTransaction().toByteArray()));
-    query.setTransaction(transaction.freeze());
-
+    query.setApp(projectIdOrDefault(request.getPartitionId().getProjectId()));
+    query.setStrong(
+        com.google.datastore.v1.ReadOptions.ReadConsistency.STRONG==request.getReadOptions().getReadConsistency());
+    if (request.hasReadOptions() && !request.getReadOptions().getTransaction().isEmpty()) {
+      final Transaction transaction = new Transaction();
+      transaction.setHandle(Longs.fromByteArray(request.getReadOptions().getTransaction().toByteArray()));
+      query.setTransaction(transaction.freeze());
+    }
     for(final com.google.datastore.v1.Projection projection : request.getQuery().getProjectionList()) {
       query.addPropertyName(projection.getProperty().getName());
     }
@@ -358,10 +407,18 @@ class DatastoreTypeTranslator {
       query.addOrder(translate(propertyOrder));
     }
     query.setDistinct(request.getQuery().getDistinctOnCount()>0); // hmmm
-    query.setCompiledCursor(decodeCursor(request.getQuery().getStartCursor()));
-    query.setEndCompiledCursor(decodeCursor(request.getQuery().getEndCursor()));
-    query.setOffset(request.getQuery().getOffset());
-    query.setLimit(request.getQuery().getLimit().getValue());
+    if (!request.getQuery().getStartCursor().isEmpty()) {
+      query.setCompiledCursor(decodeCursor(request.getQuery().getStartCursor()));
+    }
+    if (!request.getQuery().getEndCursor().isEmpty()) {
+      query.setEndCompiledCursor(decodeCursor(request.getQuery().getEndCursor()));
+    }
+    if (query.hasOffset()) {
+      query.setOffset(request.getQuery().getOffset());
+    }
+    if (query.hasLimit()) {
+      query.setLimit(request.getQuery().getLimit().getValue());
+    }
     return query.freeze();
   }
 
@@ -372,13 +429,14 @@ class DatastoreTypeTranslator {
         com.google.datastore.v1.QueryResultBatch.newBuilder();
     batch.setSkippedResults(response.getSkippedResults());
     batch.setSkippedCursor(encodeCursor(response.getSkippedResultsCompiledCursor()));
-    com.google.datastore.v1.EntityResult.ResultType resultType = ResultType.PROJECTION;
-    for (int i=0; i>response.resultSize(); i++) {
+    com.google.datastore.v1.EntityResult.ResultType resultType =
+        com.google.datastore.v1.EntityResult.ResultType.PROJECTION;
+    for (int i=0; i<response.resultSize(); i++) {
       final com.google.datastore.v1.EntityResult.Builder entityResult =
           com.google.datastore.v1.EntityResult.newBuilder();
       entityResult.setEntity(translate(null, response.getResult(i)));
-      entityResult.setCursor(encodeCursor(response.getResultCompiledCursor(i)));
-      entityResult.setVersion(response.getVersion(i));
+      //entityResult.setCursor(encodeCursor(response.getResultCompiledCursor(i)));
+      //entityResult.setVersion(response.getVersion(i));
       batch.addEntityResults(entityResult.build());
     }
     batch.setEntityResultType(resultType);

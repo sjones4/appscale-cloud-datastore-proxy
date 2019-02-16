@@ -26,6 +26,7 @@ import com.google.apphosting.api.DatastorePb.PutResponse;
 import com.google.apphosting.api.DatastorePb.Query;
 import com.google.apphosting.api.DatastorePb.QueryResult;
 import com.google.apphosting.api.DatastorePb.Transaction;
+import com.google.common.base.Strings;
 
 /**
  * Implementation of DatastoreService api using Remote RPC to datastore
@@ -55,6 +56,10 @@ class RemoteDatastoreService implements DatastoreService {
 
   public static void setProjectIdContext(final String projectId) {
     RemoteDatastoreService.projectId.set(projectId);
+  }
+
+  public static String getProjectIdOrContext(final String projectId) {
+    return MoreObjects.firstNonNull(Strings.emptyToNull(projectId), RemoteDatastoreService.projectId.get());
   }
 
   public <T extends ProtocolMessage<T>> T call(

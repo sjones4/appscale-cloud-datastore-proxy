@@ -44,13 +44,8 @@ class RemoteRpc implements Closeable {
   ) {
     final String requestId = Long.toString(ID.incrementAndGet());
     final Request request = makeRequest(serviceName, methodName, payload, requestId);
-    final Response response = getResponse(host, port, headers, request);
-    if (response.hasJavaException()) {
-      //TODO error handling
-    }
-    if (response.hasException()) {
-      //TODO error handling
-    }
+    final Response response =
+        RemoteRpcException.throwIfError(getResponse(host, port, headers, request));
     return response.getResponseAsBytes();
   }
 
