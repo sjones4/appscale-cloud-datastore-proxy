@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.function.Function;
 import com.google.appengine.repackaged.com.google.common.collect.Lists;
 import com.google.appengine.repackaged.com.google.io.protocol.ProtocolMessage;
+import com.google.apphosting.api.DatastorePb.DeleteRequest;
 import com.google.apphosting.api.DatastorePb.PutRequest;
 import com.google.apphosting.api.DatastorePb.Transaction;
 import com.google.datastore.v1.AllocateIdsRequest;
@@ -58,7 +59,9 @@ class CloudDatastoreProxyService implements CloudDatastoreService {
       final List<MutationResult> mutationResults = Lists.newArrayList();
       Transaction tx = null;
       for (final ProtocolMessage<?> mutation : mutations) {
-        if (mutation instanceof PutRequest) {
+        if (mutation instanceof DeleteRequest) {
+          mutationResults.addAll(translate(datastore.delete((DeleteRequest) mutation)));
+        } else if (mutation instanceof PutRequest) {
           mutationResults.addAll(translate(datastore.put((PutRequest) mutation)));
         } else if (mutation instanceof Transaction) {
           tx = (Transaction) mutation;

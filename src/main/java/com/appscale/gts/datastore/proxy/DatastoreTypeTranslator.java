@@ -37,6 +37,7 @@ import com.google.apphosting.api.DatastorePb.Query.Order;
 import com.google.apphosting.api.DatastorePb.QueryResult;
 import com.google.apphosting.api.DatastorePb.Transaction;
 import com.google.datastore.v1.CommitRequest.TransactionSelectorCase;
+import com.google.datastore.v1.MutationResult;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.NullValue;
 import com.google.protobuf.Timestamp;
@@ -207,20 +208,21 @@ class DatastoreTypeTranslator {
 
   public static List<ProtocolMessage<?>> translate(final com.google.datastore.v1.CommitRequest request) {
     final List<ProtocolMessage<?>> messages = Lists.newArrayList();
-    final List<EntityProto> inserts = Lists.newArrayList();
+    final List<EntityProto> upserts = Lists.newArrayList();
+    final List<Reference> deletes = Lists.newArrayList();
     for(final com.google.datastore.v1.Mutation mutation : request.getMutationsList()) {
       switch (mutation.getOperationCase()) {
         case INSERT:
-          inserts.add(translate(mutation.getInsert()));
+          upserts.add(translate(mutation.getInsert()));
           break;
         case UPDATE:
-          mutation.getUpdate();
+          upserts.add(translate(mutation.getUpdate()));
           break;
         case UPSERT:
-          inserts.add(translate(mutation.getUpsert()));
+          upserts.add(translate(mutation.getUpsert()));
           break;
         case DELETE:
-          mutation.getDelete();
+          deletes.add(translate(mutation.getDelete()));
           break;
         case OPERATION_NOT_SET:
           break;
@@ -236,13 +238,23 @@ class DatastoreTypeTranslator {
       tx = null;
     }
 
-    if ( !inserts.isEmpty() ) {
+    if ( !upserts.isEmpty() ) {
       final PutRequest put = new PutRequest();
       if (tx != null) {
         put.setTransaction(tx.clone());
       }
-      inserts.forEach(put.mutableEntitys()::add);
+      upserts.forEach(put.mutableEntitys()::add);
       messages.add(put); // inserts
+    }
+
+    //TODO need to do this in a way that preserves entity order
+    if ( !deletes.isEmpty() ) {
+      final DeleteRequest delete = new DeleteRequest();
+      if (tx != null) {
+        delete.setTransaction(tx.clone());
+      }
+      deletes.forEach(delete.mutableKeys()::add);
+      messages.add(delete); // deletes
     }
 
     if (tx != null) {
@@ -425,6 +437,15 @@ class DatastoreTypeTranslator {
       lookupResponse.addDeferred(translate(response.getDeferred(i)));
     }
     return lookupResponse.build();
+  }
+
+  public static List<com.google.datastore.v1.MutationResult> translate(final DeleteResponse response) {
+    final List<com.google.datastore.v1.MutationResult> results = Lists.newArrayList();
+    final List<Long> versions = response.versions();
+    for (final long version : versions) {
+      results.add(MutationResult.newBuilder().setVersion(version).build());
+    }
+    return results;
   }
 
   public static List<com.google.datastore.v1.MutationResult> translate(final PutResponse response) {
