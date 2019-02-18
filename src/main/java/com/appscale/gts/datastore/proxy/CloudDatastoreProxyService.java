@@ -6,7 +6,12 @@
 package com.appscale.gts.datastore.proxy;
 
 import static com.appscale.gts.datastore.proxy.DatastoreTypeTranslator.translate;
+import java.util.List;
 import java.util.function.Function;
+import com.google.appengine.repackaged.com.google.common.collect.Lists;
+import com.google.appengine.repackaged.com.google.io.protocol.ProtocolMessage;
+import com.google.apphosting.api.DatastorePb.PutRequest;
+import com.google.apphosting.api.DatastorePb.Transaction;
 import com.google.datastore.v1.AllocateIdsRequest;
 import com.google.datastore.v1.AllocateIdsResponse;
 import com.google.datastore.v1.BeginTransactionRequest;
@@ -15,6 +20,7 @@ import com.google.datastore.v1.CommitRequest;
 import com.google.datastore.v1.CommitResponse;
 import com.google.datastore.v1.LookupRequest;
 import com.google.datastore.v1.LookupResponse;
+import com.google.datastore.v1.MutationResult;
 import com.google.datastore.v1.RollbackRequest;
 import com.google.datastore.v1.RollbackResponse;
 import com.google.datastore.v1.RunQueryRequest;
@@ -47,7 +53,21 @@ class CloudDatastoreProxyService implements CloudDatastoreService {
 
   @Override
   public CommitResponse commit(final CommitRequest request) {
-    return doWithDatastore(datastore -> translate(datastore.commit(translate(request))));
+    return doWithDatastore(datastore -> {
+      final List<ProtocolMessage<?>> mutations = translate(request);
+      final List<MutationResult> mutationResults = Lists.newArrayList();
+      Transaction tx = null;
+      for (final ProtocolMessage<?> mutation : mutations) {
+        if (mutation instanceof PutRequest) {
+          mutationResults.addAll(translate(datastore.put((PutRequest) mutation)));
+        } else if (mutation instanceof Transaction) {
+          tx = (Transaction) mutation;
+        } else {
+          throw new RuntimeException("Unsupported mutation " + mutation);
+        }
+      }
+      return translate(mutationResults, tx==null ? null : datastore.commit(tx));
+    });
   }
 
   @Override

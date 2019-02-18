@@ -19,6 +19,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.rpc.Code;
 import com.google.rpc.Status;
 import spark.Request;
+import spark.Response;
 import sun.misc.HexDumpEncoder;
 
 /**
@@ -37,6 +38,13 @@ public class Main {
         request.headers( ).stream( )
             .reduce("", (headers, header) -> headers + header + ": " + request.headers(header) + "\n") +
             new HexDumpEncoder().encode(request.bodyAsBytes());
+  }
+
+  private static String responseHeadersToString(Response response) {
+    return
+        response.status() + "\n" +
+        response.raw().getHeaderNames().stream()
+            .reduce("", (headers, header) -> headers + header + ": " + response.raw().getHeader(header) + "\n");
   }
 
   private static byte[] handleProto(final String projectId, final String method, final byte[] data) {
@@ -101,6 +109,9 @@ public class Main {
     });
     before((request, response) -> {
       System.out.println(requestInfoToString(request));
+    });
+    after((request, response) -> {
+      System.out.println(responseHeadersToString(response));
     });
   }
 }
