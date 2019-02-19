@@ -6,10 +6,7 @@
 package com.appscale.gts.datastore.proxy;
 
 import com.google.appengine.api.datastore.DatastoreApiHelper;
-import com.google.appengine.repackaged.com.google.common.base.MoreObjects;
-import com.google.appengine.repackaged.com.google.common.collect.ImmutableMap;
 import com.google.appengine.repackaged.com.google.io.protocol.ProtocolMessage;
-import com.google.appengine.repackaged.com.google.protobuf.InvalidProtocolBufferException;
 import com.google.apphosting.api.ApiBasePb.VoidProto;
 import com.google.apphosting.api.ApiProxy.ApplicationException;
 import com.google.apphosting.api.DatastorePb.AllocateIdsRequest;
@@ -27,6 +24,9 @@ import com.google.apphosting.api.DatastorePb.Query;
 import com.google.apphosting.api.DatastorePb.QueryResult;
 import com.google.apphosting.api.DatastorePb.Transaction;
 import com.google.common.base.Strings;
+import com.google.common.base.MoreObjects;
+import com.google.common.collect.ImmutableMap;
+import com.google.protobuf.InvalidProtocolBufferException;
 
 /**
  * Implementation of DatastoreService api using Remote RPC to datastore

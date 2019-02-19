@@ -6,8 +6,6 @@
 package com.appscale.gts.datastore.proxy;
 
 import static spark.Spark.*;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import com.appscale.gts.datastore.proxy.RemoteRpcException.Type;
 import com.google.datastore.v1.AllocateIdsRequest;
 import com.google.datastore.v1.BeginTransactionRequest;
@@ -18,6 +16,8 @@ import com.google.datastore.v1.RunQueryRequest;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.rpc.Code;
 import com.google.rpc.Status;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import spark.Request;
 import spark.Response;
 import sun.misc.HexDumpEncoder;
@@ -108,10 +108,10 @@ public class Main {
       return handleProto(project, method, req.bodyAsBytes());
     });
     before((request, response) -> {
-      System.out.println(requestInfoToString(request));
+      log.info(requestInfoToString(request));
     });
     after((request, response) -> {
-      System.out.println(responseHeadersToString(response));
+      log.info(responseHeadersToString(response));
     });
   }
 }
