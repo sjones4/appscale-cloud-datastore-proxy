@@ -598,8 +598,13 @@ class DatastoreTypeTranslator {
       transaction.setHandle(decodeTx(request.getReadOptions().getTransaction()));
       query.setTransaction(transaction.freeze());
     }
-    for(final com.google.datastore.v1.Projection projection : request.getQuery().getProjectionList()) {
-      query.addPropertyName(projection.getProperty().getName());
+    if (request.getQuery().getProjectionList().size()==1 &&
+        "__key__".equals(request.getQuery().getProjectionList().get(0).getProperty().getName())) {
+      query.setKeysOnly(true);
+    } else {
+      for (final com.google.datastore.v1.Projection projection : request.getQuery().getProjectionList()) {
+        query.addPropertyName(projection.getProperty().getName());
+      }
     }
     query.setKind(request.getQuery().getKind(0).getName());
     for(final Filter filter : filters(Lists.newArrayList(), request.getQuery().getFilter()) ) {
